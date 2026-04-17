@@ -34,7 +34,7 @@ O **CookieJar** é uma ferramenta de desktop focada em performance e usabilidade
 
 1. Clone o repositório:
    ```bash
-   git clone [https://github.com/SEU_USUARIO/SEU_REPO.git](https://github.com/SEU_USUARIO/SEU_REPO.git)
+   git clone [https://github.com/BrunoTaletti/CookieJar.git](https://github.com/BrunoTaletti/CookieJar.git)
 
 2. Instale as dependências:
     ```bash
