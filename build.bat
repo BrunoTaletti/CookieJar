@@ -24,15 +24,23 @@ rmdir /s /q build dist >nul 2>&1
 
 :: 3. COMPILACAO PYINSTALLER
 :: Verifica se o pyinstaller esta instalado
-pip install pyinstaller Pillow customtkinter >nul 2>&1
+pip install pyinstaller Pillow customtkinter >nul 2>&1 
 
 echo Construindo o Executavel...
-pyinstaller --noconsole --onefile --windowed --icon=app-icon.ico --add-data "app-icon.png;." --add-data "app-icon.ico;." --add-data "version.txt;." --name "CookieJar" main.py
+pyinstaller ^
+--noconsole ^
+--onefile ^
+--windowed ^
+--icon=app-icon.ico ^
+--add-data "app-logo.png;." ^
+--add-data "app-icon.ico;." ^
+--add-data "version.txt;." ^
+--name "CookieJar" main.py
 
 :: 4. COMPILACAO DO INSTALADOR (INNO SETUP)
 echo Criando o Instalador...
 :: Altere o caminho abaixo se o seu Inno Setup estiver instalado em outro local!
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion="!NEW_VERSION!" setup.iss
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion="!NEW_VERSION!" installer.iss
 
 echo ==========================================
 echo ✅ BUILD E INSTALADOR GERADOS COM SUCESSO!
