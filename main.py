@@ -1,167 +1,394 @@
-import customtkinter as ctk
-from tkinter import filedialog
-import tkinter as tk
-import json
-import re
-from PIL import Image
 import sys
 import os
+import json
+import re
 import requests
-import threading
 import webbrowser
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                             QHBoxLayout, QLabel, QPushButton, QSpacerItem, 
+                             QSizePolicy, QFrame, QTextEdit, QFileDialog, QGridLayout)
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt6.QtGui import QIcon, QPixmap, QFont, QCursor
 
-# Tema minimalista (Força o dark mode nativo)
-ctk.set_appearance_mode("dark")
+# ==========================================
+# CONFIGURAÇÕES DO GITHUB UPDATER
+# ==========================================
+GITHUB_REPO = "BrunoTaletti/GhostCookie"
 
 def resource_path(relative_path):
-    """ Retorna o caminho absoluto, essencial para o PyInstaller encontrar arquivos após o build """
     try:
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-class CookieJarApp(ctk.CTk):
+def get_current_version():
+    v_path = resource_path("version.txt")
+    if os.path.exists(v_path):
+        with open(v_path, "r") as f:
+            return f.read().strip()
+    return "0.0.1"
+
+class UpdateChecker(QThread):
+    update_available = pyqtSignal(str, str)
+
+    def run(self):
+        try:
+            url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                latest_version = data.get("tag_name", "").replace("v", "")
+                release_url = data.get("html_url", "")
+                
+                current = get_current_version()
+                curr_parts = [int(x) for x in current.split('.') if x.isdigit()]
+                lat_parts = [int(x) for x in latest_version.split('.') if x.isdigit()]
+                
+                if lat_parts > curr_parts:
+                    self.update_available.emit(latest_version, release_url)
+        except Exception:
+            pass 
+
+class GhostCookie(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.current_version = get_current_version()
+        self.update_url = None
+        self.old_pos = None
 
-        # --- CORES ---
-        self.color_bg_dark = "#0E0E0E"
-        self.color_bg_light = "#171717"
-        self.color_text = "#FFFFFF"
-        self.color_border = "#333333"
+        # Paleta Monocromática GhostCore
+        self.color_success = "#FFFFFF" # Branco puro
+        self.color_warning = "#888888" # Cinza médio
+        self.color_error   = "#555555" # Cinza escuro (estilo ERR_SYS)
+        self.color_base    = "#333333" # Borda padrão
+        self.color_accent  = "#ffc31d" # Amarelo Ghost
+
+        # Controle do Timer de Toasts
+        self.toast_timer = QTimer()
+        self.toast_timer.setSingleShot(True)
+        self.toast_timer.timeout.connect(self.clear_toast)
+
+        self.init_ui()
+
+        self.update_thread = UpdateChecker()
+        self.update_thread.update_available.connect(self.on_update_available)
+        self.update_thread.start()
+
+    def init_ui(self):
+        # Configuração Frameless
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowIcon(QIcon(resource_path("app-icon.ico")))
+        self.resize(340, 500)
+
+        # Container Principal
+        self.central_widget = QFrame()
+        self.central_widget.setObjectName("MainFrame")
+        self.setCentralWidget(self.central_widget)
         
-        self.color_success = "#00FF7F"
-        self.color_error = "#FF4C4C"
-        self.color_warning = "#FFCC00"
+        main_layout = QVBoxLayout(self.central_widget)
+        main_layout.setContentsMargins(1, 1, 1, 1)
+        main_layout.setSpacing(0)
 
-        # --- CONFIGURAÇÃO DA JANELA ---
-        self.title("CookieJar")
-        self.geometry("380x560")
-        self.minsize(320, 500) 
-        self.configure(fg_color=self.color_bg_dark)
-        
-        # --- ÍCONE DA JANELA ---
-        try:
-            self.iconbitmap(resource_path("app-icon.ico"))
-        except Exception:
-            try:
-                app_icon = tk.PhotoImage(file=resource_path("app-icon.png"))
-                self.iconphoto(False, app_icon)
-            except Exception:
-                pass
-
-        # --- LOGO / NOME DO APP ---
-        try:
-            logo_img = ctk.CTkImage(
-                light_image=Image.open(resource_path("app-logo.png")),
-                dark_image=Image.open(resource_path("app-logo.png")),
-                size=(300, 120) 
-            )
-            self.title_label = ctk.CTkLabel(self, image=logo_img, text="")
-        except Exception:
-            self.title_label = ctk.CTkLabel(
-                self, text="CookieJar 👻", font=("Segoe UI", 24, "bold"), text_color=self.color_text
-            )
-        self.title_label.pack(pady=(15, 5))
-
-        # --- CAMPOS DE TEXTO ---
-        self.input_label = ctk.CTkLabel(self, text="JSON(s) de entrada:", font=("Segoe UI", 12, "bold"), text_color=self.color_text)
-        self.input_label.pack(anchor="w", padx=15)
-        
-        self.input_text = ctk.CTkTextbox(self, height=80, font=("Consolas", 12), fg_color=self.color_bg_light, border_color=self.color_border, border_width=1, text_color=self.color_text)
-        self.input_text.pack(fill="both", expand=True, padx=15, pady=(0, 10))
-
-        self.output_label = ctk.CTkLabel(self, text="Resultado:", font=("Segoe UI", 12, "bold"), text_color=self.color_text)
-        self.output_label.pack(anchor="w", padx=15)
-        
-        self.output_text = ctk.CTkTextbox(self, height=80, font=("Consolas", 12), fg_color=self.color_bg_light, border_color=self.color_border, border_width=1, text_color=self.color_text)
-        self.output_text.pack(fill="both", expand=True, padx=15, pady=(0, 10))
-
-        # --- BOTÕES ---
-        self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.btn_frame.pack(fill="x", padx=10, pady=5)
-        self.btn_frame.columnconfigure(0, weight=1)
-        self.btn_frame.columnconfigure(1, weight=1)
-
-        self.btn_org = ctk.CTkButton(self.btn_frame, text="🔄 Organizar", command=self.organizar, fg_color="#222222", hover_color="#444444", text_color=self.color_text, border_width=1, border_color="#555555")
-        self.btn_org.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
-
-        self.btn_val = ctk.CTkButton(self.btn_frame, text="🔍 Validar", command=self.validar, fg_color="#222222", hover_color="#444444", text_color=self.color_text, border_width=1, border_color="#555555")
-        self.btn_val.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-
-        self.btn_min = ctk.CTkButton(self.btn_frame, text="🗜️ Minify", command=self.minify, fg_color="#222222", hover_color="#444444", text_color=self.color_text, border_width=1, border_color="#555555")
-        self.btn_min.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
-
-        self.btn_copy = ctk.CTkButton(self.btn_frame, text="📋 Copiar", command=self.copiar, fg_color="#222222", hover_color="#444444", text_color=self.color_text, border_width=1, border_color="#555555")
-        self.btn_copy.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-
-        self.btn_exp = ctk.CTkButton(self.btn_frame, text="💾 Exportar", command=self.exportar, fg_color=self.color_text, hover_color="#CCCCCC", text_color="#000000", font=("Segoe UI", 13, "bold"))
-        self.btn_exp.grid(row=2, column=0, columnspan=2, padx=5, pady=(5, 10), sticky="ew")
-
-        self.toast_label = ctk.CTkLabel(self, text="", font=("Segoe UI", 13, "bold"))
-        self.toast_label.pack(pady=2)
-
-        # --- RODAPÉ E VERSÃO ---
-        self.footer_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.footer_frame.pack(side="bottom", pady=(0, 5))
-
-        self.version = self.load_version()
-        self.version_label = ctk.CTkLabel(self.footer_frame, text=f"v{self.version}", font=("Segoe UI", 10), text_color="#444444")
-        self.version_label.pack(side="left", padx=5)
-
-        # Botão de update (Oculto por padrão)
-        self.btn_update = ctk.CTkButton(
-            self.footer_frame, text="Atualizar app", fg_color="#0066CC", hover_color="#004C99", 
-            font=("Segoe UI", 10, "bold"), width=90, height=20, command=self.open_update_link
-        )
-        
-        # Inicia a checagem de update em background
-        threading.Thread(target=self.check_for_updates, daemon=True).start()
-
-    # --- FUNÇÕES DE UPDATE ---
-    def load_version(self):
-        try:
-            with open(resource_path("version.txt"), "r") as f:
-                return f.read().strip()
-        except Exception:
-            return "0.0.1"
-
-    def check_for_updates(self):
-        try:
-            UPDATE_TXT_URL = "https://raw.githubusercontent.com/brunotaletti/CookieJar/main/version.txt"
+        # ==================== ESTILO GLOBAL E SCROLLBARS ====================
+        self.setStyleSheet(f"""
+            QFrame#MainFrame {{
+                background-color: #000000;
+                border: 1px solid {self.color_accent};
+                border-top: 2px solid {self.color_accent};
+            }}
+            QLabel {{ color: #888888; font-family: 'Consolas', 'Segoe UI'; font-size: 11px; letter-spacing: 1px;}}
             
-            response = requests.get(UPDATE_TXT_URL, timeout=5)
-            if response.status_code == 200:
-                latest_version = response.text.strip()
-                if self.is_newer_version(self.version, latest_version):
-                    # Traz a exibição do botão para a thread principal da interface
-                    self.after(0, self.show_update_button)
-        except Exception:
-            # Falha silenciosa (sem internet, link off, etc)
-            pass
+            /* Scrollbar Vertical Fininha (Cyberpunk Style) */
+            QScrollBar:vertical {{
+                border: none;
+                background-color: #000000;
+                width: 6px;
+                margin: 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: #333333;
+                min-height: 20px;
+                border-radius: 3px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {self.color_accent};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                border: none;
+                background: none;
+                height: 0px;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
 
-    def is_newer_version(self, current, latest):
+            /* Botões de Ação do Grid */
+            QPushButton.ActionBtn {{
+                background-color: transparent; 
+                border: 1px solid #333333; 
+                color: #AAAAAA; 
+                font-family: 'Consolas'; 
+                font-size: 11px; 
+                letter-spacing: 1px;
+                padding: 8px;
+            }}
+            QPushButton.ActionBtn:hover {{ 
+                background-color: #111111; 
+                border: 1px solid #FFFFFF; 
+                color: #FFFFFF; 
+            }}
+            
+            /* Botão Exportar */
+            QPushButton.ExportBtn {{
+                background-color: #111111; 
+                border: 1px solid #555555; 
+                color: #FFFFFF; 
+                font-family: 'Consolas'; 
+                font-size: 12px; 
+                font-weight: bold;
+                letter-spacing: 2px;
+                padding: 10px;
+            }}
+            QPushButton.ExportBtn:hover {{ background-color: #FFFFFF; color: #000000; }}
+
+            /* Botão Inline de Limpar (SYS.CLR) */
+            QPushButton.HeaderBtn {{
+                background-color: transparent; 
+                border: none; 
+                color: #555555; 
+                font-family: 'Consolas'; 
+                font-size: 10px; 
+                font-weight: bold;
+                letter-spacing: 1px;
+            }}
+            QPushButton.HeaderBtn:hover {{ color: {self.color_accent}; }}
+
+            /* Botões do Top Bar */
+            QPushButton#CloseBtn, QPushButton#MinBtn {{
+                background-color: transparent; color: #555555; font-weight: bold; font-family: 'Consolas'; font-size: 14px;
+            }}
+            QPushButton#CloseBtn:hover, QPushButton#MinBtn:hover {{ color: #FFFFFF; }}
+            
+            /* Botão de Versão */
+            QPushButton#VersionBtn {{
+                background-color: transparent; border: none; color: #444444; font-size: 10px; font-family: 'Consolas'; letter-spacing: 1px;
+                padding-top: 8px; padding-bottom: 5px;
+            }}
+            QPushButton#VersionBtn:hover {{ color: #FFFFFF; }}
+            QPushButton#VersionBtnUpdate {{
+                background-color: transparent; border: none; color: #FFFFFF; font-size: 10px; font-family: 'Consolas'; font-weight: bold;
+                padding-top: 8px; padding-bottom: 5px;
+            }}
+            QPushButton#VersionBtnUpdate:hover {{ color: #AAAAAA; }}
+        """)
+
+        # 1. Custom Title Bar
+        title_bar = QFrame()
+        title_bar.setFixedHeight(30)
+        title_bar.setStyleSheet("background-color: #000000;")
+        title_layout = QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(15, 0, 10, 0)
+        
+        title_label = QLabel("GHOST//COOKIE")
+        title_label.setStyleSheet(f"color: {self.color_accent}; font-weight: bold; font-size: 11px; letter-spacing: 2px;")
+        
+        min_btn = QPushButton("—")
+        min_btn.setObjectName("MinBtn")
+        min_btn.setFixedSize(30, 30)
+        min_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        min_btn.clicked.connect(self.showMinimized)
+        
+        close_btn = QPushButton("X")
+        close_btn.setObjectName("CloseBtn")
+        close_btn.setFixedSize(30, 30)
+        close_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        close_btn.clicked.connect(self.close)
+
+        title_layout.addWidget(title_label)
+        title_layout.addStretch()
+        title_layout.addWidget(min_btn)
+        title_layout.addWidget(close_btn)
+        
+        main_layout.addWidget(title_bar)
+
+        # 2. Content Area
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(15, 10, 15, 10)
+        content_layout.setSpacing(8)
+
+        # Logo
+        self.logo_label = QLabel()
+        self.logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_path = resource_path("app-logo.png")
+        if os.path.exists(logo_path):
+            pixmap = QPixmap(logo_path).scaled(220, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            self.logo_label.setPixmap(pixmap)
+        else:
+            self.logo_label.setText("GHOST//COOKIE")
+            self.logo_label.setStyleSheet("color: #FFFFFF; font-size: 24px; font-weight: bold; font-family: 'Segoe UI';")
+        content_layout.addWidget(self.logo_label)
+
+        # Toast Feedback Label
+        self.toast_label = QLabel("SYS_STANDBY //")
+        self.toast_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.toast_label.setContentsMargins(0, 8, 0, 8) 
+        self.toast_label.setStyleSheet(f"color: {self.color_warning}; font-weight: bold; font-family: 'Consolas'; font-size: 10px; letter-spacing: 1px;")
+        content_layout.addWidget(self.toast_label)
+
+        # Header do Input Stream (Layout horizontal para o texto e o botão de limpar)
+        input_header_layout = QHBoxLayout()
+        input_header_layout.setContentsMargins(0, 0, 0, 0)
+        
+        lbl_in = QLabel("INPUT_STREAM //")
+        input_header_layout.addWidget(lbl_in)
+        
+        input_header_layout.addStretch() # Empurra o botão pra direita
+        
+        self.btn_clear = QPushButton("[ SYS.CLR ]")
+        self.btn_clear.setProperty("class", "HeaderBtn")
+        self.btn_clear.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_clear.clicked.connect(self.limpar)
+        input_header_layout.addWidget(self.btn_clear)
+        
+        content_layout.addLayout(input_header_layout)
+
+        # Campo de Input
+        self.input_text = QTextEdit()
+        self.input_text.setAcceptRichText(False)
+        self.input_text.setStyleSheet(self.get_textedit_style(self.color_base))
+        self.input_text.textChanged.connect(self.realtime_validate)
+        content_layout.addWidget(self.input_text)
+
+        # Campo de Output
+        lbl_out = QLabel("OUTPUT_STREAM //")
+        content_layout.addWidget(lbl_out)
+
+        self.output_text = QTextEdit()
+        self.output_text.setAcceptRichText(False)
+        self.output_text.setStyleSheet(self.get_textedit_style(self.color_base))
+        self.output_text.setReadOnly(True) 
+        content_layout.addWidget(self.output_text)
+
+        # Grid de Botões Principais
+        btn_grid = QGridLayout()
+        btn_grid.setSpacing(6)
+
+        self.btn_org = QPushButton("SYS.ORG")
+        self.btn_org.setProperty("class", "ActionBtn")
+        self.btn_org.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_org.clicked.connect(self.organizar)
+        btn_grid.addWidget(self.btn_org, 0, 0)
+
+        self.btn_val = QPushButton("SYS.VAL")
+        self.btn_val.setProperty("class", "ActionBtn")
+        self.btn_val.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_val.clicked.connect(self.validar)
+        btn_grid.addWidget(self.btn_val, 0, 1)
+
+        self.btn_min = QPushButton("SYS.MIN")
+        self.btn_min.setProperty("class", "ActionBtn")
+        self.btn_min.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_min.clicked.connect(self.minify)
+        btn_grid.addWidget(self.btn_min, 1, 0)
+
+        self.btn_copy = QPushButton("SYS.CPY")
+        self.btn_copy.setProperty("class", "ActionBtn")
+        self.btn_copy.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_copy.clicked.connect(self.copiar)
+        btn_grid.addWidget(self.btn_copy, 1, 1)
+
+        self.btn_exp = QPushButton("SYS.EXPORT")
+        self.btn_exp.setProperty("class", "ExportBtn")
+        self.btn_exp.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.btn_exp.clicked.connect(self.exportar)
+        btn_grid.addWidget(self.btn_exp, 2, 0, 1, 2)
+
+        content_layout.addLayout(btn_grid)
+
+        content_layout.addSpacerItem(QSpacerItem(20, 5, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
+
+        # Version Button
+        self.version_btn = QPushButton(f"SYS.VER // {self.current_version}")
+        self.version_btn.setObjectName("VersionBtn")
+        self.version_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.version_btn.clicked.connect(self.handle_version_click)
+        content_layout.addWidget(self.version_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        main_layout.addWidget(content_widget)
+
+    # ==========================================
+    # LÓGICA DE ARRASTAR A JANELA FRAMELESS
+    # ==========================================
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.old_pos = event.globalPosition().toPoint()
+
+    def mouseMoveEvent(self, event):
+        if self.old_pos is not None:
+            delta = event.globalPosition().toPoint() - self.old_pos
+            self.move(self.pos() + delta)
+            self.old_pos = event.globalPosition().toPoint()
+
+    def mouseReleaseEvent(self, event):
+        self.old_pos = None
+
+    # ==========================================
+    # STYLESHEET DINÂMICO DOS INPUTS
+    # ==========================================
+    def get_textedit_style(self, border_color):
+        return f"""
+            QTextEdit {{
+                background-color: #050505; 
+                border: 1px solid #111111;
+                border-bottom: 2px solid {border_color};
+                padding: 10px; 
+                font-family: 'Consolas';
+                font-size: 11px; 
+                color: {self.color_success};
+            }}
+            QTextEdit:focus {{ border-bottom: 2px solid #FFFFFF; background-color: #0A0A0A; }}
+        """
+
+    # ==========================================
+    # LÓGICA CORE & VALIDAÇÃO REAL-TIME
+    # ==========================================
+    def realtime_validate(self):
+        text = self.input_text.toPlainText().strip()
+        
+        self.toast_timer.stop() 
+
+        if not text:
+            self.toast_label.setText("SYS_STANDBY //")
+            self.toast_label.setStyleSheet(f"color: {self.color_warning}; font-weight: bold; font-family: 'Consolas'; font-size: 10px; letter-spacing: 1px;")
+            self.input_text.setStyleSheet(self.get_textedit_style(self.color_base))
+            return
+            
         try:
-            # Converte "1.0.5" para [1, 0, 5] para comparar corretamente matematicamente
-            curr_parts = [int(x) for x in current.split('.') if x.isdigit()]
-            lat_parts = [int(x) for x in latest.split('.') if x.isdigit()]
-            return lat_parts > curr_parts
-        except Exception:
-            return False
+            parsed = json.loads(text)
+            if isinstance(parsed, (dict, list)):
+                self.toast_label.setText("SYS_OK // SINTAXE_VALIDA")
+                self.toast_label.setStyleSheet(f"color: {self.color_success}; font-weight: bold; font-family: 'Consolas'; font-size: 10px; letter-spacing: 1px;")
+                self.input_text.setStyleSheet(self.get_textedit_style(self.color_success))
+            else:
+                raise ValueError()
+        except (json.JSONDecodeError, ValueError):
+            self.toast_label.setText("ERR_SYS // SINTAXE_INVALIDA")
+            self.toast_label.setStyleSheet(f"color: {self.color_error}; font-weight: bold; font-family: 'Consolas'; font-size: 10px; letter-spacing: 1px;")
+            self.input_text.setStyleSheet(self.get_textedit_style(self.color_error))
 
-    def show_update_button(self):
-        self.btn_update.pack(side="left", padx=5)
+    def limpar(self):
+        self.input_text.clear()
+        self.output_text.clear()
+        self._set_output("", self.color_base)
+        self.show_action_toast("SYS_OK // BUFFERS_LIMPOS", self.color_success)
 
-    def open_update_link(self):
-        RELEASE_URL = "https://github.com/BrunoTaletti/CookieJar/releases/latest"
-        webbrowser.open(RELEASE_URL)
-
-    # --- LÓGICA CORE ---
     def organizar(self):
-        text = self.input_text.get("1.0", "end-1c").strip()
+        text = self.input_text.toPlainText().strip()
         if not text: 
-            self.show_toast("⚠️ Insira dados primeiro.", self.color_warning)
+            self.show_action_toast("ERR_SYS // INPUT_VAZIO", self.color_error)
             return
             
         text = re.sub(r'\]\s*\[', ',', text)
@@ -173,89 +400,111 @@ class CookieJarApp(ctk.CTk):
         try:
             parsed = json.loads(text)
             if not isinstance(parsed, (dict, list)):
-                raise ValueError("JSON não é um objeto ou lista.")
+                raise ValueError("OBJ_NOT_FOUND")
                 
             pretty_json = json.dumps(parsed, indent=4)
             self._set_output(pretty_json, self.color_success)
-            self.show_toast("✨ Organizado e Corrigido!", self.color_success)
+            self.show_action_toast("SYS_OK // FORMATACAO_APLICADA", self.color_success)
         except (json.JSONDecodeError, ValueError) as e:
-            self._set_output(f"Ainda há erros:\n{str(e)}\n\nResultado parcial:\n{text}", self.color_warning)
-            self.show_toast("⚠️ Requer revisão.", self.color_warning)
+            error_msg = str(e).upper()
+            self._set_output(f"// TRACE_DUMP:\n{error_msg}\n\n// RAW_BUFFER:\n{text}", self.color_error)
+            self.show_action_toast("ERR_SYS // REVISAO_NECESSARIA", self.color_error)
 
     def validar(self):
         text = self.get_working_text()
         if not text:
-            self.show_toast("⚠️ Insira dados para validar.", self.color_warning)
+            self.show_action_toast("ERR_SYS // INPUT_VAZIO", self.color_error)
             return
             
         try:
             parsed = json.loads(text)
-            
-            # Validação rigorosa: Garante que é uma estrutura JSON real (Dicionário ou Lista)
             if not isinstance(parsed, (dict, list)):
-                raise ValueError("O formato não é um objeto JSON {} ou array [].")
+                raise ValueError("FORMAT_ERR")
                 
             pretty_json = json.dumps(parsed, indent=4)
             self._set_output(pretty_json, self.color_success)
-            self.show_toast("✅ JSON Válido!", self.color_success)
+            self.show_action_toast("SYS_OK // SINTAXE_VALIDADA", self.color_success)
         except (json.JSONDecodeError, ValueError) as e:
-            self._set_output(f"❌ JSON Inválido:\n{str(e)}", self.color_error)
-            self.show_toast("❌ Falha na validação", self.color_error)
+            error_msg = str(e).upper()
+            self._set_output(f"// TRACE_DUMP:\n{error_msg}\n\n// RAW_BUFFER:\n{text}", self.color_error)
+            self.show_action_toast("ERR_SYS // FALHA_NA_VALIDACAO", self.color_error)
 
     def minify(self):
         text = self.get_working_text()
         if not text: 
-            self.show_toast("⚠️ Insira dados primeiro.", self.color_warning)
+            self.show_action_toast("ERR_SYS // DATA_NOT_FOUND", self.color_error)
             return
             
         try:
             parsed = json.loads(text)
             if not isinstance(parsed, (dict, list)):
-                raise ValueError("Formato inválido.")
+                raise ValueError("FORMAT_ERR")
                 
             minified_json = json.dumps(parsed, separators=(',', ':'))
             self._set_output(minified_json, self.color_success)
-            self.show_toast("🗜️ Minificado!", self.color_text)
+            self.show_action_toast("SYS_OK // MINIFY_EXECUTADO", self.color_success)
         except (json.JSONDecodeError, ValueError):
-            self.show_toast("⚠️ Valide ou organize o JSON primeiro.", self.color_warning)
+            self.show_action_toast("ERR_SYS // SINTAXE_CORROMPIDA", self.color_error)
 
     def copiar(self):
-        text = self.output_text.get("1.0", "end-1c").strip()
-        if text and not text.startswith("❌") and not text.startswith("Ainda"):
-            self.clipboard_clear()
-            self.clipboard_append(text)
-            self.show_toast("📋 Copiado!", self.color_text)
+        text = self.output_text.toPlainText().strip()
+        if text and not text.startswith("// TRACE_DUMP"):
+            clipboard = QApplication.clipboard()
+            clipboard.setText(text)
+            self.show_action_toast("SYS_OK // DADOS_COPIADOS", self.color_success)
         else:
-            self.show_toast("⚠️ Nada válido para copiar.", self.color_warning)
+            self.show_action_toast("ERR_SYS // CLIPBOARD_VAZIO", self.color_error)
 
     def exportar(self):
-        text = self.output_text.get("1.0", "end-1c").strip()
-        if text and not text.startswith("❌") and not text.startswith("Ainda"):
-            filepath = filedialog.asksaveasfilename(
-                defaultextension=".txt", filetypes=[("Text Files", "*.txt"), ("JSON Files", "*.json")], title="Exportar"
+        text = self.output_text.toPlainText().strip()
+        if text and not text.startswith("// TRACE_DUMP"):
+            filepath, _ = QFileDialog.getSaveFileName(
+                self, "Exportar Buffer", "", "JSON Files (*.json);;Text Files (*.txt)"
             )
             if filepath:
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(text)
-                self.show_toast("💾 Exportado com sucesso!", self.color_success)
+                self.show_action_toast("SYS_OK // EXPORT_CONCLUIDO", self.color_success)
         else:
-            self.show_toast("⚠️ Nada válido para exportar.", self.color_warning)
+            self.show_action_toast("ERR_SYS // PAYLOAD_INVALIDO", self.color_error)
 
     def get_working_text(self):
-        out_text = self.output_text.get("1.0", "end-1c").strip()
-        if out_text and not out_text.startswith("❌") and not out_text.startswith("Ainda"):
+        out_text = self.output_text.toPlainText().strip()
+        if out_text and not out_text.startswith("// TRACE_DUMP"):
             return out_text
-        return self.input_text.get("1.0", "end-1c").strip()
+        return self.input_text.toPlainText().strip()
 
-    def _set_output(self, text, color):
-        self.output_text.delete("1.0", "end")
-        self.output_text.insert("1.0", text)
-        self.output_text.configure(text_color=color)
+    def _set_output(self, text, border_color):
+        self.output_text.setPlainText(text)
+        self.output_text.setStyleSheet(self.get_textedit_style(border_color))
 
-    def show_toast(self, message, color):
-        self.toast_label.configure(text=message, text_color=color)
-        self.after(2500, lambda: self.toast_label.configure(text=""))
+    # ==========================================
+    # SISTEMA DE NOTIFICAÇÕES (TOAST)
+    # ==========================================
+    def show_action_toast(self, message, color):
+        self.toast_label.setText(message)
+        self.toast_label.setStyleSheet(f"color: {color}; font-weight: bold; font-family: 'Consolas'; font-size: 10px; letter-spacing: 1px;")
+        self.toast_timer.start(2500) 
+
+    def clear_toast(self):
+        self.realtime_validate()
+
+    # ==========================================
+    # LÓGICA DE UPDATE
+    # ==========================================
+    def on_update_available(self, version, url):
+        self.update_url = url
+        self.version_btn.setText(f"UPDATE_READY // v{version}")
+        self.version_btn.setObjectName("VersionBtnUpdate")
+        self.version_btn.style().unpolish(self.version_btn)
+        self.version_btn.style().polish(self.version_btn)
+
+    def handle_version_click(self):
+        if self.update_url:
+            webbrowser.open(self.update_url)
 
 if __name__ == "__main__":
-    app = CookieJarApp()
-    app.mainloop()
+    app = QApplication(sys.argv)
+    window = GhostCookie()
+    window.show()
+    sys.exit(app.exec())

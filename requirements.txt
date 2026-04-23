@@ -1,4 +1,3 @@
-customtkinter
-pillow
-pyinstaller
+PyQt6
 requests
+pyotp
