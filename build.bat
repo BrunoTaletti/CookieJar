@@ -15,7 +15,7 @@ set NEW_VERSION=%MAJOR%.%MINOR%.!PATCH!
 echo !NEW_VERSION!> %VERSION_FILE%
 
 echo ==========================================
-echo 👻 INICIANDO BUILD DO COOKIEJAR v!NEW_VERSION!
+echo 👻 INICIANDO BUILD DO GHOST COOKIE v!NEW_VERSION!
 echo ==========================================
 
 :: 2. LIMPEZA DE BUILDS ANTIGOS
@@ -35,7 +35,7 @@ pyinstaller ^
 --add-data "app-logo.png;." ^
 --add-data "app-icon.ico;." ^
 --add-data "version.txt;." ^
---name "CookieJar" main.py
+--name "GhostCookie" main.py
 
 :: 4. COMPILACAO DO INSTALADOR (INNO SETUP)
 echo Criando o Instalador...

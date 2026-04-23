@@ -1,6 +1,6 @@
-#define MyAppName "CookieJar"
+#define MyAppName "GhostCookie"
 #define MyAppPublisher "GhostCore"
-#define MyAppExeName "CookieJar.exe"
+#define MyAppExeName "GhostCookie.exe"
 ; O MyAppVersion é injetado pelo arquivo .bat via linha de comando
 
 [Setup]
@@ -12,7 +12,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=.\setup
-OutputBaseFilename=CookieJar_v{#MyAppVersion}
+OutputBaseFilename={#MyAppName}_v{#MyAppVersion}
 SetupIconFile=app-icon.ico
 Compression=lzma
 SolidCompression=yes
